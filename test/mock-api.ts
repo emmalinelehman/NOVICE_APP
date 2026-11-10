@@ -1,12 +1,16 @@
 // In-browser fake of src/lib/api.ts for local testing without Supabase.
 // Mirrors the database rules in supabase/schema.sql closely enough to click through every flow.
 import type {
+  Host,
+  HostInput,
   InterestStat,
   Intent,
   ListItem,
   Message,
   NewPlan,
   Plan,
+  PlanEdit,
+  PlanKind,
   Profile,
   Session,
 } from "../src/lib/types";
@@ -23,7 +27,9 @@ type Db = {
   plans: {
     id: number; interest: number; organizer: string; title: string; starts_at: string;
     location: string; details: string | null; capacity: number; status: "open" | "cancelled";
+    kind?: PlanKind; price_cents?: number | null;
   }[];
+  hosts?: Host[];
   members: { plan: number; user: string; joined_at: string; attended: boolean | null }[];
   messages: Message[];
   reports: { plan: number; reason: string }[];
@@ -51,6 +57,13 @@ function seed(): Db {
       { id: "u-ava", email: "ava@x.edu", password: "secret1", name: "Ava", onboarded: true, hood: null },
       { id: "u-ben", email: "ben@x.edu", password: "secret1", name: "Ben", onboarded: true, hood: null },
       { id: "u-cy", email: "cy@x.edu", password: "secret1", name: "Cy", onboarded: true, hood: null },
+      { id: "u-dee", email: "dee@x.edu", password: "secret1", name: "Dee", onboarded: true, hood: null },
+    ],
+    hosts: [
+      {
+        id: "u-dee", business_name: "Kerrytown Clay Studio", website: "https://example.com",
+        about: "Small pottery studio. Beginners welcome every week.", verified: true,
+      },
     ],
     interests: suggested.map(([name, category], i) => ({ id: i + 1, name, category, suggested: true })),
     items: [],
@@ -79,6 +92,14 @@ function seed(): Db {
   });
   db.members.push({ plan: 2, user: "u-ben", joined_at: iso(now), attended: null });
   db.members.push({ plan: 2, user: "u-cy", joined_at: iso(now), attended: null });
+  // A hosted experience. The host (Dee) is not a member; capacity is attendee spots.
+  db.plans.push({
+    id: 3, interest: 1, organizer: "u-dee", title: "Intro to the wheel for total beginners",
+    starts_at: iso(now + 6 * 86400000), location: "Kerrytown Clay Studio, 201 Hill St",
+    details: "90 minutes. Clay and one firing included.", capacity: 8, status: "open",
+    kind: "hosted", price_cents: 3500,
+  });
+  db.members.push({ plan: 3, user: "u-cy", joined_at: iso(now), attended: null });
   return db;
 }
 
@@ -181,6 +202,29 @@ export async function finishOnboarding() {
 }
 export async function logVisit() {}
 
+// ---------- Hosts ----------
+export async function myHost(): Promise<Host | null> {
+  await wait();
+  return (db.hosts ?? []).find((h) => h.id === me().id) ?? null;
+}
+export async function saveHost(h: HostInput) {
+  await wait();
+  const u = me();
+  const name = h.businessName.trim().replace(/\s+/g, " ");
+  if (name.length < 2 || name.length > 80) throw new Error("Business name must be 2 to 80 characters.");
+  let website = h.website.trim() || null;
+  if (website && !/^https?:\/\//i.test(website)) website = `https://${website}`;
+  if (website && !/^https?:\/\/[a-z0-9.-]+\.[a-z]{2,}(\/\S*)?$/i.test(website))
+    throw new Error("That website address doesn't look right.");
+  db.hosts = db.hosts ?? [];
+  if (db.hosts.some((x) => x.id !== u.id && x.business_name.toLowerCase() === name.toLowerCase()))
+    throw new Error("Another host already uses that business name.");
+  const existing = db.hosts.find((x) => x.id === u.id);
+  if (existing) Object.assign(existing, { business_name: name, website, about: h.about.trim() || null });
+  else db.hosts.push({ id: u.id, business_name: name, website, about: h.about.trim() || null, verified: false });
+  save();
+}
+
 // ---------- Interests ----------
 function openPlans(interest: number) {
   return db.plans.filter(
@@ -270,6 +314,8 @@ export async function allPlans(): Promise<Plan[]> {
       const i = db.interests.find((x) => x.id === p.interest)!;
       const ms = db.members.filter((m) => m.plan === p.id);
       const mine = ms.find((m) => m.user === u.id);
+      const kind = p.kind ?? "peer";
+      const host = kind === "hosted" ? (db.hosts ?? []).find((h) => h.id === p.organizer) : undefined;
       return {
         id: p.id, interest_id: i.id, interest_name: i.name, category: i.category,
         title: p.title, starts_at: p.starts_at, location: p.location, details: p.details,
@@ -278,6 +324,9 @@ export async function allPlans(): Promise<Plan[]> {
         member_count: ms.length,
         members: ms.map((m) => ({ user_id: m.user, name: db.users.find((x) => x.id === m.user)?.name ?? null })),
         is_member: Boolean(mine), my_attended: mine ? mine.attended : null,
+        kind, price_cents: p.price_cents ?? null,
+        host_name: host?.business_name ?? null, host_verified: host?.verified ?? false,
+        host_website: host?.website ?? null,
       };
     })
     .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
@@ -286,15 +335,38 @@ export async function createPlan(p: NewPlan) {
   await wait();
   const u = me();
   if (new Date(p.startsAt).getTime() <= Date.now()) throw new Error("Choose a time in the future.");
+  if (p.asHost && !(db.hosts ?? []).some((h) => h.id === u.id)) throw new Error("Set up your host profile first.");
+  const max = p.asHost ? 200 : 30;
+  if (p.capacity < 2 || p.capacity > max)
+    throw new Error("Group size must be 2 to 30 people (up to 200 for hosted experiences).");
   const id = db.seq++;
   db.plans.push({
     id, interest: p.interestId, organizer: u.id, title: p.title, starts_at: p.startsAt,
     location: p.location, details: p.details || null, capacity: p.capacity, status: "open",
+    kind: p.asHost ? "hosted" : "peer", price_cents: p.asHost ? (p.priceCents ?? null) : null,
   });
-  db.members.push({ plan: id, user: u.id, joined_at: new Date().toISOString(), attended: null });
-  upsertItem(u.id, p.interestId, "ready");
+  if (!p.asHost) {
+    db.members.push({ plan: id, user: u.id, joined_at: new Date().toISOString(), attended: null });
+    upsertItem(u.id, p.interestId, "ready");
+  }
   save();
   return id;
+}
+export async function updatePlan(planId: number, e: PlanEdit) {
+  await wait();
+  const u = me();
+  const p = db.plans.find((x) => x.id === planId);
+  if (!p || p.organizer !== u.id) throw new Error("Only the organizer can edit this plan.");
+  if (p.status !== "open") throw new Error("Cancelled plans can't be edited.");
+  if (new Date(p.starts_at).getTime() <= Date.now()) throw new Error("This plan has already started.");
+  if (new Date(e.startsAt).getTime() <= Date.now()) throw new Error("Choose a time in the future.");
+  const n = db.members.filter((m) => m.plan === planId).length;
+  if (e.capacity < n) throw new Error(`${n} people are already going. Group size can't be smaller than that.`);
+  Object.assign(p, {
+    title: e.title, starts_at: e.startsAt, location: e.location, details: e.details || null,
+    capacity: e.capacity, price_cents: p.kind === "hosted" ? (e.priceCents ?? null) : null,
+  });
+  save();
 }
 export async function joinPlan(planId: number) {
   await wait();
@@ -303,6 +375,7 @@ export async function joinPlan(planId: number) {
   if (!p) throw new Error("This plan no longer exists.");
   if (p.status !== "open") throw new Error("This plan was cancelled.");
   if (new Date(p.starts_at).getTime() <= Date.now()) throw new Error("This plan has already started.");
+  if (p.kind === "hosted" && p.organizer === u.id) throw new Error("You're hosting this one, so you don't need a spot.");
   if (db.members.some((m) => m.plan === planId && m.user === u.id)) return;
   if (db.members.filter((m) => m.plan === planId).length >= p.capacity) throw new Error("This plan is full.");
   db.members.push({ plan: planId, user: u.id, joined_at: new Date().toISOString(), attended: null });
@@ -343,13 +416,19 @@ export async function setAttended(planId: number, attended: boolean) {
 export async function planMessages(planId: number) {
   await wait();
   const u = me();
-  if (!db.members.some((m) => m.plan === planId && m.user === u.id)) return [];
+  const canRead = (id: string) =>
+    db.members.some((m) => m.plan === planId && m.user === id) ||
+    db.plans.some((x) => x.id === planId && x.organizer === id);
+  if (!canRead(u.id)) return [];
   return db.messages.filter((m) => (m as Message & { plan?: number }).plan === planId);
 }
 export async function postMessage(planId: number, body: string) {
   await wait();
   const u = me();
-  if (!db.members.some((m) => m.plan === planId && m.user === u.id))
+  if (
+    !db.members.some((m) => m.plan === planId && m.user === u.id) &&
+    !db.plans.some((x) => x.id === planId && x.organizer === u.id)
+  )
     throw new Error("You don't have permission to do that.");
   db.messages.push({ id: db.seq++, user_id: u.id, name: u.name, body, created_at: new Date().toISOString(), plan: planId } as Message);
   save();

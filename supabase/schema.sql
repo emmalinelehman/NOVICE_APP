@@ -55,7 +55,7 @@ create table if not exists public.plans (
   starts_at timestamptz not null,
   location text not null check (char_length(btrim(location)) between 2 and 120),
   details text check (details is null or char_length(details) <= 500),
-  capacity int not null check (capacity between 2 and 30),
+  capacity int not null, -- limits depend on the plan kind; see plans_capacity_check below
   status text not null default 'open' check (status in ('open', 'cancelled')),
   created_at timestamptz not null default now(),
   constraint plans_organizer_id_fkey foreign key (organizer_id) references public.profiles (id) on delete cascade
@@ -97,6 +97,36 @@ create table if not exists public.app_visits (
   primary key (user_id, day)
 );
 
+-- Business hosts (studios, gyms, venues). Same login as a regular member: a host is a user with
+-- a business profile attached. Self-serve: anyone signed in can create one and post right away.
+-- Only the NOVICE team can set verified = true (Table Editor > hosts); it shows a badge.
+create table if not exists public.hosts (
+  id uuid primary key default auth.uid() references public.profiles (id) on delete cascade,
+  business_name text not null check (char_length(btrim(business_name)) between 2 and 80),
+  website text check (website is null or char_length(website) <= 200),
+  about text check (about is null or char_length(about) <= 400),
+  verified boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists hosts_name_unique on public.hosts (lower(btrim(business_name)));
+
+-- Plans come in two kinds:
+--   peer:   organized by a member, free, 2 to 30 people, organizer counts as a member.
+--   hosted: listed by a business host, may show a price paid at the venue (NOVICE never takes
+--           payment), 2 to 200 spots, the host is NOT a member (capacity = attendee spots).
+-- Written as ALTERs so re-running this file upgrades a database created before hosts existed.
+alter table public.plans add column if not exists kind text not null default 'peer';
+alter table public.plans add column if not exists price_cents int;
+alter table public.plans drop constraint if exists plans_kind_check;
+alter table public.plans add constraint plans_kind_check check (kind in ('peer', 'hosted'));
+alter table public.plans drop constraint if exists plans_capacity_check;
+alter table public.plans add constraint plans_capacity_check
+  check (capacity >= 2 and capacity <= case when kind = 'hosted' then 200 else 30 end);
+alter table public.plans drop constraint if exists plans_price_check;
+alter table public.plans add constraint plans_price_check
+  check (price_cents is null or (kind = 'hosted' and price_cents between 0 and 100000));
+create index if not exists plans_organizer_idx on public.plans (organizer_id, starts_at);
+
 -- ---------------------------------------------------------------------------
 -- Row level security (who can see and change what)
 -- ---------------------------------------------------------------------------
@@ -108,6 +138,7 @@ alter table public.plan_members enable row level security;
 alter table public.plan_messages enable row level security;
 alter table public.reports enable row level security;
 alter table public.app_visits enable row level security;
+alter table public.hosts enable row level security;
 
 -- Signed-out visitors get nothing.
 revoke all on all tables in schema public from anon;
@@ -136,12 +167,27 @@ drop policy if exists list_items_all on public.list_items;
 create policy list_items_all on public.list_items for all to authenticated
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 
+-- Hosts: business profiles are public to signed-in users. You can create and edit only your own,
+-- and never set verified yourself (see the column grants below).
+drop policy if exists hosts_select on public.hosts;
+create policy hosts_select on public.hosts for select to authenticated using (true);
+drop policy if exists hosts_insert on public.hosts;
+create policy hosts_insert on public.hosts for insert to authenticated
+  with check (id = auth.uid() and verified = false);
+drop policy if exists hosts_update on public.hosts;
+create policy hosts_update on public.hosts for update to authenticated
+  using (id = auth.uid()) with check (id = auth.uid());
+
 -- Plans: readable by everyone signed in; only the organizer can create/cancel their own.
+-- Only people with a host profile can create hosted plans.
 drop policy if exists plans_select on public.plans;
 create policy plans_select on public.plans for select to authenticated using (true);
 drop policy if exists plans_insert on public.plans;
 create policy plans_insert on public.plans for insert to authenticated
-  with check (organizer_id = auth.uid() and status = 'open');
+  with check (
+    organizer_id = auth.uid() and status = 'open'
+    and (kind = 'peer' or exists (select 1 from public.hosts h where h.id = auth.uid()))
+  );
 drop policy if exists plans_update on public.plans;
 create policy plans_update on public.plans for update to authenticated
   using (organizer_id = auth.uid()) with check (organizer_id = auth.uid());
@@ -160,15 +206,19 @@ drop policy if exists plan_members_delete on public.plan_members;
 create policy plan_members_delete on public.plan_members for delete to authenticated
   using (user_id = auth.uid());
 
--- Messages: members of the plan only.
+-- Messages: members of the plan, plus its organizer (hosts aren't members of hosted plans).
 drop policy if exists plan_messages_select on public.plan_messages;
 create policy plan_messages_select on public.plan_messages for select to authenticated using (
   exists (select 1 from public.plan_members m where m.plan_id = plan_messages.plan_id and m.user_id = auth.uid())
+  or exists (select 1 from public.plans p where p.id = plan_messages.plan_id and p.organizer_id = auth.uid())
 );
 drop policy if exists plan_messages_insert on public.plan_messages;
 create policy plan_messages_insert on public.plan_messages for insert to authenticated with check (
   user_id = auth.uid()
-  and exists (select 1 from public.plan_members m where m.plan_id = plan_messages.plan_id and m.user_id = auth.uid())
+  and (
+    exists (select 1 from public.plan_members m where m.plan_id = plan_messages.plan_id and m.user_id = auth.uid())
+    or exists (select 1 from public.plans p where p.id = plan_messages.plan_id and p.organizer_id = auth.uid())
+  )
 );
 
 -- Reports: insert only.
@@ -188,6 +238,9 @@ revoke update on public.plan_members from authenticated;
 grant update (attended) on public.plan_members to authenticated;
 revoke update on public.plans from authenticated;
 grant update (status) on public.plans to authenticated;
+revoke insert, update on public.hosts from authenticated;
+grant insert (id, business_name, website, about) on public.hosts to authenticated;
+grant update (business_name, website, about) on public.hosts to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Triggers
@@ -226,6 +279,9 @@ begin
   if not found then raise exception 'This plan no longer exists.'; end if;
   if p.status <> 'open' then raise exception 'This plan was cancelled.'; end if;
   if p.starts_at <= now() then raise exception 'This plan has already started.'; end if;
+  if p.kind = 'hosted' and p.organizer_id = new.user_id then
+    raise exception 'You''re hosting this one, so you don''t need a spot.';
+  end if;
   select count(*) into n from public.plan_members where plan_id = new.plan_id;
   if n >= p.capacity then raise exception 'This plan is full.'; end if;
   return new;
@@ -251,11 +307,13 @@ drop trigger if exists plan_members_after on public.plan_members;
 create trigger plan_members_after after insert on public.plan_members
   for each row execute function public.after_plan_join();
 
--- Organizers are members of their own plan.
+-- Peer organizers are members of their own plan. Hosts are not members of hosted plans.
 create or replace function public.after_plan_create()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.plan_members (plan_id, user_id) values (new.id, new.organizer_id);
+  if new.kind = 'peer' then
+    insert into public.plan_members (plan_id, user_id) values (new.id, new.organizer_id);
+  end if;
   return new;
 end $$;
 drop trigger if exists plans_after_create on public.plans;
@@ -376,29 +434,105 @@ returns void language sql set search_path = public as $$
    where user_id = auth.uid() and interest_id = p_interest_id;
 $$;
 
+-- ---------- Hosts ----------
+create or replace function public.my_host()
+returns table (id uuid, business_name text, website text, about text, verified boolean)
+language sql stable set search_path = public as $$
+  select id, business_name, website, about, verified from public.hosts where id = auth.uid();
+$$;
+
+-- Create or update your business profile.
+create or replace function public.save_host(p_business_name text, p_website text, p_about text)
+returns void language plpgsql set search_path = public as $$
+declare
+  n text := regexp_replace(btrim(coalesce(p_business_name, '')), '\s+', ' ', 'g');
+  w text := nullif(btrim(coalesce(p_website, '')), '');
+  a text := nullif(btrim(coalesce(p_about, '')), '');
+begin
+  if char_length(n) not between 2 and 80 then
+    raise exception 'Business name must be 2 to 80 characters.';
+  end if;
+  if w is not null and w !~* '^https?://' then w := 'https://' || w; end if;
+  if w is not null and (char_length(w) > 200 or w !~* '^https?://[a-z0-9.-]+\.[a-z]{2,}(/\S*)?$') then
+    raise exception 'That website address doesn''t look right.';
+  end if;
+  if a is not null and char_length(a) > 400 then
+    raise exception 'Keep the description under 400 characters.';
+  end if;
+  begin
+    insert into public.hosts (id, business_name, website, about) values (auth.uid(), n, w, a)
+    on conflict (id) do update
+      set business_name = excluded.business_name, website = excluded.website, about = excluded.about;
+  exception when unique_violation then
+    raise exception 'Another host already uses that business name.';
+  end;
+end $$;
+
+-- ---------- Plans ----------
+-- Old 6-argument version, replaced by the one below. Dropped so the app never calls it by mistake.
+drop function if exists public.create_plan(bigint, text, timestamptz, text, text, int);
 create or replace function public.create_plan(
   p_interest_id bigint, p_title text, p_starts_at timestamptz,
-  p_location text, p_details text, p_capacity int
+  p_location text, p_details text, p_capacity int,
+  p_as_host boolean default false, p_price_cents int default null
 ) returns bigint language plpgsql set search_path = public as $$
 declare pid bigint;
 begin
   if p_starts_at <= now() then raise exception 'Choose a time in the future.'; end if;
   if p_starts_at > now() + interval '120 days' then raise exception 'Choose a date within the next 4 months.'; end if;
-  insert into public.plans (interest_id, organizer_id, title, starts_at, location, details, capacity)
+  if p_as_host and not exists (select 1 from public.hosts where id = auth.uid()) then
+    raise exception 'Set up your host profile first.';
+  end if;
+  insert into public.plans (interest_id, organizer_id, title, starts_at, location, details, capacity, kind, price_cents)
   values (p_interest_id, auth.uid(), btrim(p_title), p_starts_at, btrim(p_location),
-          nullif(btrim(coalesce(p_details, '')), ''), p_capacity)
+          nullif(btrim(coalesce(p_details, '')), ''), p_capacity,
+          case when p_as_host then 'hosted' else 'peer' end,
+          case when p_as_host then p_price_cents end)
   returning id into pid;
   return pid;
 end $$;
 
--- Plans with organizer and member info. Filters are optional.
+-- Organizers (peer or host) can change an upcoming plan's details. Runs with elevated rights
+-- because members can't update plan columns directly; it checks the caller is the organizer.
+create or replace function public.update_plan(
+  p_plan_id bigint, p_title text, p_starts_at timestamptz, p_location text,
+  p_details text, p_capacity int, p_price_cents int default null
+) returns void language plpgsql security definer set search_path = public as $$
+declare p public.plans; n int;
+begin
+  select * into p from public.plans where id = p_plan_id for update;
+  if not found or p.organizer_id is distinct from auth.uid() then
+    raise exception 'Only the organizer can edit this plan.';
+  end if;
+  if p.status <> 'open' then raise exception 'Cancelled plans can''t be edited.'; end if;
+  if p.starts_at <= now() then raise exception 'This plan has already started.'; end if;
+  if p_starts_at <= now() then raise exception 'Choose a time in the future.'; end if;
+  if p_starts_at > now() + interval '120 days' then raise exception 'Choose a date within the next 4 months.'; end if;
+  select count(*) into n from public.plan_members where plan_id = p_plan_id;
+  if p_capacity < n then
+    raise exception '% people are already going. Group size can''t be smaller than that.', n;
+  end if;
+  update public.plans
+     set title = btrim(p_title),
+         starts_at = p_starts_at,
+         location = btrim(p_location),
+         details = nullif(btrim(coalesce(p_details, '')), ''),
+         capacity = p_capacity,
+         price_cents = case when p.kind = 'hosted' then p_price_cents end
+   where id = p_plan_id;
+end $$;
+
+-- Plans with organizer, host, and member info. Filters are optional.
+-- Dropped first because its columns changed (Postgres can't replace a function's return type).
+drop function if exists public.plans_feed(bigint, bigint, boolean);
 create or replace function public.plans_feed(
   p_interest_id bigint default null, p_plan_id bigint default null, p_mine boolean default false
 ) returns table (
   id bigint, interest_id bigint, interest_name text, category text,
   title text, starts_at timestamptz, location text, details text, capacity int, status text,
   organizer_id uuid, organizer_name text, member_count int, members jsonb,
-  is_member boolean, my_attended boolean
+  is_member boolean, my_attended boolean,
+  kind text, price_cents int, host_name text, host_verified boolean, host_website text
 )
 language sql stable set search_path = public as $$
   select
@@ -412,10 +546,12 @@ language sql stable set search_path = public as $$
       where m.plan_id = p.id
     ), '[]'::jsonb),
     exists (select 1 from public.plan_members m where m.plan_id = p.id and m.user_id = auth.uid()),
-    (select m.attended from public.plan_members m where m.plan_id = p.id and m.user_id = auth.uid())
+    (select m.attended from public.plan_members m where m.plan_id = p.id and m.user_id = auth.uid()),
+    p.kind, p.price_cents, h.business_name, coalesce(h.verified, false), h.website
   from public.plans p
   join public.interests i on i.id = p.interest_id
   left join public.profiles op on op.id = p.organizer_id
+  left join public.hosts h on h.id = p.organizer_id and p.kind = 'hosted'
   where (p_interest_id is null or p.interest_id = p_interest_id)
     and (p_plan_id is null or p.id = p_plan_id)
     and (not p_mine or exists (select 1 from public.plan_members m where m.plan_id = p.id and m.user_id = auth.uid()))
@@ -522,5 +658,5 @@ on conflict do nothing;
 -- Reset (only if you need to wipe everything and start over). Leave commented out.
 -- ---------------------------------------------------------------------------
 -- drop table if exists public.app_visits, public.reports, public.plan_messages, public.plan_members,
---   public.plans, public.list_items, public.interests, public.profiles cascade;
+--   public.plans, public.hosts, public.list_items, public.interests, public.profiles cascade;
 -- drop type if exists public.intent_level;

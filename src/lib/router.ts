@@ -8,6 +8,10 @@ export type Route =
   | { name: "interest"; id: number }
   | { name: "propose"; interestId: number }
   | { name: "plan"; id: number }
+  | { name: "editPlan"; id: number }
+  | { name: "host" }
+  | { name: "hostSetup" }
+  | { name: "hostNew"; interestId: number | null }
   | { name: "notFound" };
 
 export function parse(path: string): Route {
@@ -22,6 +26,13 @@ export function parse(path: string): Route {
   if (m) return { name: "propose", interestId: Number(m[1]) };
   m = clean.match(/^\/plan\/(\d+)$/);
   if (m) return { name: "plan", id: Number(m[1]) };
+  m = clean.match(/^\/plan\/(\d+)\/edit$/);
+  if (m) return { name: "editPlan", id: Number(m[1]) };
+  if (clean === "/host") return { name: "host" };
+  if (clean === "/host/setup") return { name: "hostSetup" };
+  if (clean === "/host/new") return { name: "hostNew", interestId: null };
+  m = clean.match(/^\/host\/new\/(\d+)$/);
+  if (m) return { name: "hostNew", interestId: Number(m[1]) };
   return { name: "notFound" };
 }
 

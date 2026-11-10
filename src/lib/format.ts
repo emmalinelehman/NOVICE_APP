@@ -48,3 +48,15 @@ export function longDay(iso: string) {
   const md = new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   return rel === formatDate(iso) ? rel : `${rel}, ${md}`;
 }
+
+/** "$35" or "$12.50"; null or 0 means free. */
+export function formatPrice(cents: number | null | undefined) {
+  if (!cents) return "Free";
+  const dollars = cents / 100;
+  return `$${Number.isInteger(dollars) ? dollars : dollars.toFixed(2)}`;
+}
+
+/** Who a plan is "by": the business for hosted plans, the member's first name otherwise. */
+export function plannerName(p: { kind: string; host_name: string | null; organizer_name: string | null }) {
+  return p.kind === "hosted" ? (p.host_name ?? "a local host") : (p.organizer_name ?? "a member");
+}

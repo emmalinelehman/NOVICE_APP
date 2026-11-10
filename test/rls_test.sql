@@ -131,9 +131,59 @@ select remove_from_list((select id from interests where name='Wheel pottery'));
 select pg_temp.check((select count(*) from my_list())=0, 'remove from list');
 reset role;
 
+-- Hosts: Ben sets up a business profile and lists a hosted experience
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+set role authenticated;
+select pg_temp.check((select count(*) from my_host())=0, 'no host profile yet');
+select pg_temp.expect_error($q$select create_plan((select id from interests where name='Birding'), 'Hosted walk', now() + interval '2 days', 'Arb', null, 10, true, null)$q$, 'hosted plan without host profile');
+select pg_temp.expect_error($q$insert into hosts(id, business_name, verified) values (auth.uid(), 'Self Verified Co', true)$q$, 'set own verified flag on insert');
+select pg_temp.expect_error($q$select save_host('x', null, null)$q$, 'too-short business name');
+select pg_temp.expect_error($q$select save_host('Ben Birds', 'javascript:alert(1)', null)$q$, 'non-http website');
+select save_host('  Ben''s   Birding Co ', 'benbirds.com', 'Guided walks for first-timers');
+select pg_temp.check((select business_name='Ben''s Birding Co' and website='https://benbirds.com' and not verified from my_host()), 'host profile saved, normalized, unverified');
+select pg_temp.expect_error($q$update hosts set verified = true where id = auth.uid()$q$, 'verify yourself');
+select pg_temp.expect_error($q$select create_plan((select id from interests where name='Birding'), 'Huge walk', now() + interval '2 days', 'Arb', null, 201, true, null)$q$, 'hosted capacity over 200');
+select pg_temp.expect_error($q$select create_plan((select id from interests where name='Birding'), 'Pricey walk', now() + interval '2 days', 'Arb', null, 20, true, 200000)$q$, 'price over $1000');
+select create_plan((select id from interests where name='Birding'), 'Guided beginner bird walk', now() + interval '2 days', 'Nichols Arboretum', null, 100, true, 2500);
+select pg_temp.check((select kind='hosted' and member_count=0 and not is_member and price_cents=2500 and host_name='Ben''s Birding Co' and host_website='https://benbirds.com'
+  from plans_feed(p_plan_id => (select max(id) from plans))), 'hosted plan: host is not a member, price and host shown');
+select pg_temp.expect_error($q$select join_plan((select max(id) from plans))$q$, 'host joins own hosted plan');
+select update_plan((select max(id) from plans), 'Guided bird walk', now() + interval '3 days', 'Nichols Arboretum, Geddes entrance', 'Binoculars provided', 50, 2000);
+select pg_temp.check((select title='Guided bird walk' and capacity=50 and price_cents=2000 and details='Binoculars provided'
+  from plans_feed(p_plan_id => (select max(id) from plans))), 'host edits listing');
+select pg_temp.expect_error($q$select update_plan((select max(id) from plans), 'Guided bird walk', now() - interval '1 day', 'Arb', null, 50, null)$q$, 'edit to a past time');
+select post_message((select max(id) from plans), 'Meet by the big oak');
+select pg_temp.check((select count(*) from plan_messages_for((select max(id) from plans)))=1, 'host (non-member) reads and posts messages');
+reset role;
+
+-- Cy: sees hosts, can't edit or verify them, can't post hosted plans, can join
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+set role authenticated;
+select pg_temp.check((select count(*) from hosts)=1, 'host profiles are public to members');
+update hosts set business_name = 'Hacked';
+select pg_temp.check((select business_name from hosts)='Ben''s Birding Co', 'cannot edit someone else host profile');
+select pg_temp.expect_error($q$select update_plan((select max(id) from plans), 'Hacked', now() + interval '3 days', 'Arb', null, 50, null)$q$, 'edit someone else plan');
+select pg_temp.expect_error($q$insert into plans(interest_id, organizer_id, title, starts_at, location, capacity, kind) values (1, auth.uid(), 'Fake hosted', now() + interval '1 day', 'Arb', 10, 'hosted')$q$, 'insert hosted plan directly without host profile');
+select pg_temp.check((select count(*) from plan_messages_for((select max(id) from plans)))=0, 'non-member cannot read hosted messages');
+select join_plan((select max(id) from plans));
+select pg_temp.check((select member_count=1 and is_member from plans_feed(p_plan_id => (select max(id) from plans))), 'member joins hosted plan');
+select pg_temp.check((select count(*) from plan_messages_for((select max(id) from plans)))=1, 'member reads host message');
+reset role;
+
+-- Ava: peer plans ignore prices; organizers can edit their own peer plan, not shrink below members
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+set role authenticated;
+select create_plan((select id from interests where name='Wheel pottery'), 'Second wheel night', now() + interval '5 days', 'Potters Guild', null, 4, false, 1500);
+select pg_temp.check((select kind='peer' and price_cents is null and member_count=1 from plans_feed(p_plan_id => (select max(id) from plans))), 'peer plan has no price, organizer is member');
+select pg_temp.expect_error($q$select update_plan((select max(id) from plans), 'Second wheel night', now() + interval '5 days', 'Potters Guild', null, 31, null)$q$, 'peer capacity over 30 on edit');
+select update_plan((select max(id) from plans), 'Second wheel night, moved', now() + interval '6 days', 'Potters Guild', null, 3, 999);
+select pg_temp.check((select title='Second wheel night, moved' and capacity=3 and price_cents is null from plans_feed(p_plan_id => (select max(id) from plans))), 'peer organizer edits plan; price stays null');
+reset role;
+
 -- Signed-out visitors
 set role anon;
 select pg_temp.expect_error($q$select * from plans$q$, 'anon reads plans');
 select pg_temp.expect_error($q$select * from interest_stats()$q$, 'anon calls stats');
+select pg_temp.expect_error($q$select * from hosts$q$, 'anon reads hosts');
 reset role;
 \echo ALL DONE

@@ -1,11 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import * as api from "@/lib/api";
-import type { InterestStat, ListItem, Plan, Profile, Session } from "@/lib/types";
+import type { Host, InterestStat, ListItem, Plan, Profile, Session } from "@/lib/types";
 
 type Store = {
   session: Session;
   profile: Profile | null;
+  /** The user's business profile, if they've set one up. */
+  host: Host | null;
   stats: InterestStat[];
   list: ListItem[];
   plans: Plan[];
@@ -22,6 +24,7 @@ const StoreContext = createContext<Store | null>(null);
 
 export function StoreProvider({ session, children }: { session: Session; children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [host, setHost] = useState<Host | null>(null);
   const [stats, setStats] = useState<InterestStat[]>([]);
   const [list, setList] = useState<ListItem[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -38,13 +41,15 @@ export function StoreProvider({ session, children }: { session: Session; childre
 
   const refresh = useCallback(async () => {
     try {
-      const [p, s, l, pl] = await Promise.all([
+      const [p, h, s, l, pl] = await Promise.all([
         api.myProfile(),
+        api.myHost(),
         api.interestStats(),
         api.myList(),
         api.allPlans(),
       ]);
       setProfile(p);
+      setHost(h);
       setStats(s);
       setList(l);
       setPlans(pl);
@@ -84,8 +89,8 @@ export function StoreProvider({ session, children }: { session: Session; childre
   }, [refresh, session.userId]);
 
   const value = useMemo(
-    () => ({ session, profile, stats, list, plans, loading, loadError, refresh, notify, run, toast }),
-    [session, profile, stats, list, plans, loading, loadError, refresh, notify, run, toast],
+    () => ({ session, profile, host, stats, list, plans, loading, loadError, refresh, notify, run, toast }),
+    [session, profile, host, stats, list, plans, loading, loadError, refresh, notify, run, toast],
   );
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

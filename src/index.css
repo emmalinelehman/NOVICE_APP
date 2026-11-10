@@ -1873,7 +1873,8 @@ main {
   .bottom-nav {
     position: fixed;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
     bottom: 0;
     left: 0;
     right: 0;
@@ -2869,4 +2870,147 @@ main {
     height: 190px;
     margin: -8px 0 24px;
   }
+}
+
+/* ------------------------------------------------------------------
+   Hosts: business profiles, hosted experiences, host dashboard
+   ------------------------------------------------------------------ */
+.small-print {
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 10px;
+  color: var(--sage);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.host-callout .eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.filter-row.compact {
+  margin: 20px 0 0;
+}
+.demand-bars > button {
+  display: grid;
+  grid-template-columns: 155px 1fr;
+  align-items: center;
+  gap: 15px;
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  text-align: left;
+}
+.demand-bars > button:hover span {
+  color: var(--ink);
+}
+.demand-bars i b {
+  position: relative;
+}
+.demand-bars i em {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--rust);
+}
+.demand-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.swatch {
+  width: 10px;
+  height: 10px;
+  display: inline-block;
+}
+.swatch.listed {
+  background: var(--sage);
+}
+.swatch.join {
+  background: var(--rust);
+  margin-left: 8px;
+}
+.demand-empty {
+  margin-top: 30px;
+}
+.host-insight .linkish {
+  font-family: "IBM Plex Sans", sans-serif;
+}
+.host-summary .setting-link {
+  margin-top: 18px;
+  font-size: 0.85rem;
+}
+.host-workshops article > .listing-photo {
+  width: 115px;
+  height: 92px;
+  object-fit: cover;
+  object-position: 50% 35%;
+  border-radius: 8px;
+}
+.listing-badges {
+  display: flex;
+  gap: 8px;
+}
+.listing-title {
+  font: inherit;
+  color: var(--ink);
+  text-decoration: none;
+  text-align: left;
+  padding: 0;
+}
+.listing-title:hover {
+  text-decoration: underline;
+}
+.listing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+}
+.roster ul {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.roster li {
+  background: var(--cream);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+}
+.roster p {
+  margin: 10px 0 0;
+}
+.host-about {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.card-host {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+@media (max-width: 700px) {
+  .demand-bars > button {
+    grid-template-columns: 120px 1fr;
+  }
+  .host-workshops article > .listing-photo {
+    width: 80px;
+    height: 80px;
+  }
+}
+.booking-card .btn + .btn {
+  margin-top: 8px;
 }

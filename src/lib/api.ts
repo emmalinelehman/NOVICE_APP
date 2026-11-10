@@ -1,12 +1,15 @@
 // All communication with Supabase lives in this file. Screens only call these functions.
 import { createClient, type Session as SupabaseSession } from "@supabase/supabase-js";
 import type {
+  Host,
+  HostInput,
   InterestStat,
   Intent,
   ListItem,
   Message,
   NewPlan,
   Plan,
+  PlanEdit,
   Profile,
   Session,
 } from "./types";
@@ -39,7 +42,11 @@ export function friendlyError(message: string): string {
   if (/plans_title_check/.test(m)) return "Plan titles need 4 to 80 characters.";
   if (/plans_location_check/.test(m)) return "Add a meeting place (up to 120 characters).";
   if (/plans_details_check/.test(m)) return "Keep details under 500 characters.";
-  if (/plans_capacity_check/.test(m)) return "Group size must be between 2 and 30.";
+  if (/plans_capacity_check/.test(m))
+    return "Group size must be 2 to 30 people (up to 200 for hosted experiences).";
+  if (/plans_price_check/.test(m)) return "Price must be between $0 and $1,000.";
+  if (/hosts_business_name_check/.test(m)) return "Business name must be 2 to 80 characters.";
+  if (/hosts_about_check/.test(m)) return "Keep the description under 400 characters.";
   if (/plan_messages_body_check/.test(m)) return "Messages need 1 to 500 characters.";
   if (/row-level security|permission denied/i.test(m))
     return "You don't have permission to do that.";
@@ -100,6 +107,14 @@ export const updateProfile = (displayName: string, neighborhood: string) =>
 export const finishOnboarding = () => rpc<void>("finish_onboarding");
 export const logVisit = () => rpc<void>("log_visit");
 
+// ---------- Hosts ----------
+export async function myHost(): Promise<Host | null> {
+  const rows = await rpc<Host[]>("my_host");
+  return rows[0] ?? null;
+}
+export const saveHost = (h: HostInput) =>
+  rpc<void>("save_host", { p_business_name: h.businessName, p_website: h.website, p_about: h.about });
+
 // ---------- Interests and lists ----------
 export const interestStats = () => rpc<InterestStat[]>("interest_stats");
 export const myList = () => rpc<ListItem[]>("my_list");
@@ -124,6 +139,18 @@ export const createPlan = (p: NewPlan) =>
     p_location: p.location,
     p_details: p.details,
     p_capacity: p.capacity,
+    p_as_host: Boolean(p.asHost),
+    p_price_cents: p.asHost ? (p.priceCents ?? null) : null,
+  });
+export const updatePlan = (planId: number, p: PlanEdit) =>
+  rpc<void>("update_plan", {
+    p_plan_id: planId,
+    p_title: p.title,
+    p_starts_at: p.startsAt,
+    p_location: p.location,
+    p_details: p.details,
+    p_capacity: p.capacity,
+    p_price_cents: p.priceCents ?? null,
   });
 export const joinPlan = (planId: number) => rpc<void>("join_plan", { p_plan_id: planId });
 export const leavePlan = (planId: number) => rpc<void>("leave_plan", { p_plan_id: planId });

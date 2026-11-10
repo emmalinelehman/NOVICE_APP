@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, Check, CircleUserRound, Compass, Home as HomeIcon, ListChecks } from "lucide-react";
+import { ArrowRight, Check, CircleUserRound, Compass, Home as HomeIcon, ListChecks, Store } from "lucide-react";
 import * as api from "@/lib/api";
 import type { Session } from "@/lib/types";
 import { StoreProvider, useDerived, useStore } from "@/lib/store";
@@ -12,16 +12,19 @@ import { Home } from "@/screens/Home";
 import { ListScreen } from "@/screens/List";
 import { Explore } from "@/screens/Explore";
 import { InterestScreen } from "@/screens/Interest";
-import { Propose } from "@/screens/Propose";
+import { EditPlan, HostNewListing, Propose } from "@/screens/Propose";
+import { HostDashboard, HostSetup } from "@/screens/Host";
 import { PlanPage } from "@/screens/PlanPage";
 import { Profile } from "@/screens/Profile";
 
-const nav = [
+const memberNav = [
   { path: "/", key: "home", label: "Home", icon: HomeIcon },
   { path: "/list", key: "list", label: "My List", icon: ListChecks },
   { path: "/explore", key: "explore", label: "Explore", icon: Compass },
   { path: "/profile", key: "profile", label: "Profile", icon: CircleUserRound },
-] as const;
+];
+// Hosts get one extra tab. Everything else stays the same: a host is a member too.
+const hostNav = [...memberNav.slice(0, 3), { path: "/host", key: "host", label: "Host", icon: Store }, memberNav[3]!];
 
 export default function App() {
   if (!api.isConfigured) return <NotConfigured />;
@@ -51,11 +54,12 @@ function AuthGate() {
 function activeKey(route: Route) {
   if (route.name === "home" || route.name === "list" || route.name === "explore" || route.name === "profile")
     return route.name;
+  if (route.name === "host" || route.name === "hostSetup" || route.name === "hostNew") return "host";
   return "explore";
 }
 
 function Shell() {
-  const { profile, loading, loadError, refresh, toast } = useStore();
+  const { profile, host, loading, loadError, refresh, toast } = useStore();
   const { upcoming } = useDerived();
   const route = useRoute();
 
@@ -77,6 +81,7 @@ function Shell() {
   if (!profile.onboarded) return <Onboarding />;
 
   const active = activeKey(route);
+  const nav = host ? hostNav : memberNav;
 
   return (
     <div className="app-shell">
@@ -166,6 +171,14 @@ function RouteView({ route }: { route: Route }) {
       return <Propose key={route.interestId} interestId={route.interestId} />;
     case "plan":
       return <PlanPage key={route.id} id={route.id} />;
+    case "editPlan":
+      return <EditPlan key={route.id} id={route.id} />;
+    case "host":
+      return <HostDashboard />;
+    case "hostSetup":
+      return <HostSetup />;
+    case "hostNew":
+      return <HostNewListing key={route.interestId ?? "any"} interestId={route.interestId} />;
     default:
       return (
         <div className="page">

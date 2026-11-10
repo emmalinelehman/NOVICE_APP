@@ -4,6 +4,7 @@ import * as api from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { initials } from "@/lib/format";
 import { Button, Field } from "@/components/ui";
+import { HostCallout } from "@/screens/Host";
 
 const neighborhoods = [
   "",
@@ -84,6 +85,8 @@ export function Profile() {
           </Button>
         </div>
       </form>
+
+      <HostCallout />
 
       <section className="settings">
         <div className="about-card">

@@ -7,16 +7,27 @@ import {
   Link2,
   MapPin,
   Minus,
+  Pencil,
   Plus,
   Send,
   ShieldCheck,
+  Store,
   Users,
   X,
 } from "lucide-react";
 import * as api from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { goBack, navigate } from "@/lib/router";
-import { formatDate, formatTime, initials, isPast, longDay, relativeDay } from "@/lib/format";
+import {
+  formatDate,
+  formatPrice,
+  formatTime,
+  initials,
+  isPast,
+  longDay,
+  plannerName,
+  relativeDay,
+} from "@/lib/format";
 import type { Message, Plan } from "@/lib/types";
 import { Back, Badge, Button, Empty, ErrorBanner, Photo } from "@/components/ui";
 
@@ -38,6 +49,7 @@ export function PlanPage({ id }: { id: number }) {
   }
 
   const isOrganizer = plan.organizer_id === session.userId;
+  const hosted = plan.kind === "hosted";
   const spots = plan.capacity - plan.member_count;
   const cancelled = plan.status === "cancelled";
 
@@ -48,14 +60,23 @@ export function PlanPage({ id }: { id: number }) {
       <div className="plan-detail">
         <section>
           <div className="plan-label">
-            <Badge tone="sage">
-              <Users size={13} /> Peer-organized
-            </Badge>
+            {hosted ? (
+              <Badge tone="ink">
+                <Store size={13} /> Hosted experience
+              </Badge>
+            ) : (
+              <Badge tone="sage">
+                <Users size={13} /> Peer-organized
+              </Badge>
+            )}
             {cancelled && <Badge tone="rust">Cancelled</Badge>}
           </div>
           <p className="plan-type-help">
-            A NOVICE member made this plan. Nobody is an expert. Everyone learns alongside each
-            other.
+            {hosted
+              ? `${plannerName(plan)} is a local business running this for beginners. ${
+                  plan.price_cents ? "You pay them at the venue." : "It's free."
+                } NOVICE never handles payment.`
+              : "A NOVICE member made this plan. Nobody is an expert. Everyone learns alongside each other."}
           </p>
           <h1>{plan.title}</h1>
           <div className="detail-list">
@@ -105,21 +126,34 @@ export function PlanPage({ id }: { id: number }) {
 
           {plan.details && (
             <div className="organizer-note">
-              <p className="eyebrow">From the organizer</p>
+              <p className="eyebrow">From the {hosted ? "host" : "organizer"}</p>
               <p>{plan.details}</p>
             </div>
           )}
 
           <div className="organizer">
-            <span>{initials(plan.organizer_name)}</span>
+            <span>{initials(plannerName(plan))}</span>
             <div>
-              <small>Organized by</small>
-              <strong>{isOrganizer ? "You" : plan.organizer_name}</strong>
+              <small>{hosted ? "Hosted by" : "Organized by"}</small>
+              <strong>
+                {isOrganizer ? (hosted ? `You (${plannerName(plan)})` : "You") : plannerName(plan)}
+                {hosted && plan.host_verified && (
+                  <span className="verified" title="Confirmed by the NOVICE team">
+                    <ShieldCheck size={14} /> Verified
+                  </span>
+                )}
+              </strong>
+              {hosted && plan.host_website && (
+                <a className="host-about" href={plan.host_website} target="_blank" rel="noreferrer noopener">
+                  {plan.host_website.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+                </a>
+              )}
             </div>
           </div>
 
           <div className="participants">
             <p className="eyebrow">Who&rsquo;s going</p>
+            {plan.members.length === 0 && <small>Nobody yet. Be the first to sign up.</small>}
             <div>
               {plan.members.map((m, i) => (
                 <span key={m.user_id} style={{ zIndex: 30 - i }} title={m.name ?? undefined}>
@@ -135,7 +169,9 @@ export function PlanPage({ id }: { id: number }) {
             </small>
           </div>
 
-          {plan.is_member && <Messages planId={plan.id} myId={session.userId} />}
+          {(plan.is_member || isOrganizer) && (
+            <Messages planId={plan.id} myId={session.userId} hostName={hosted ? plannerName(plan) : null} organizerId={plan.organizer_id} />
+          )}
 
           <SafetyAndReport plan={plan} />
         </section>
@@ -151,6 +187,7 @@ export function PlanPage({ id }: { id: number }) {
 function PlanActions({ plan }: { plan: Plan }) {
   const { session, run, notify } = useStore();
   const isOrganizer = plan.organizer_id === session.userId;
+  const hosted = plan.kind === "hosted";
   const spots = plan.capacity - plan.member_count;
   const past = isPast(plan.starts_at);
   const cancelled = plan.status === "cancelled";
@@ -173,13 +210,25 @@ function PlanActions({ plan }: { plan: Plan }) {
   return (
     <>
       <div className="price">
-        <strong>{cancelled ? "Cancelled" : past ? "This plan happened" : "Free to join"}</strong>
+        <strong>
+          {cancelled
+            ? "Cancelled"
+            : past
+              ? "This plan happened"
+              : hosted
+                ? formatPrice(plan.price_cents)
+                : "Free to join"}
+        </strong>
         <span>
           {cancelled
-            ? "The organizer called this one off."
+            ? `The ${hosted ? "host" : "organizer"} called this one off.`
             : past
               ? formatDate(plan.starts_at)
-              : "Any costs are listed in the organizer's details"}
+              : hosted
+                ? plan.price_cents
+                  ? "Per person, paid at the venue. Signing up here holds your spot."
+                  : "No cost. Signing up holds your spot."
+                : "Any costs are listed in the organizer's details"}
         </span>
       </div>
 
@@ -190,20 +239,18 @@ function PlanActions({ plan }: { plan: Plan }) {
             <p>
               <strong>Beginners belong here.</strong>
               <br />
-              Joining shows your first name to the group.
+              Joining shows your first name to the group{hosted ? " and the host" : ""}.
             </p>
           </div>
-          {plan.is_member ? (
-            isOrganizer ? (
-              <OrganizerActions plan={plan} />
-            ) : (
-              <Button
-                variant="secondary"
-                onClick={() => run(() => api.leavePlan(plan.id), "You left the plan")}
-              >
-                <Minus size={17} /> Leave this plan
-              </Button>
-            )
+          {isOrganizer ? (
+            <OrganizerActions plan={plan} />
+          ) : plan.is_member ? (
+            <Button
+              variant="secondary"
+              onClick={() => run(() => api.leavePlan(plan.id), "You left the plan")}
+            >
+              <Minus size={17} /> Leave this plan
+            </Button>
           ) : spots > 0 ? (
             <Button onClick={() => run(() => api.joinPlan(plan.id), "You're in. See you there.")}>
               <Plus size={17} /> Join this plan
@@ -212,11 +259,13 @@ function PlanActions({ plan }: { plan: Plan }) {
             <Button disabled>This plan is full</Button>
           )}
           <small>
-            {plan.is_member
-              ? isOrganizer
-                ? "You're the organizer. Share the link to fill spots."
-                : "You're on the list. Messages from the group are below."
-              : `${spots} of ${plan.capacity} spots open`}
+            {isOrganizer
+              ? hosted
+                ? `You're hosting. ${plan.member_count} of ${plan.capacity} spots taken.`
+                : "You're the organizer. Share the link to fill spots."
+              : plan.is_member
+                ? "You're on the list. Messages from the group are below."
+                : `${spots} of ${plan.capacity} spots open`}
           </small>
           <Button variant="text" onClick={share} className="share-btn">
             <Link2 size={17} /> Share this plan
@@ -265,9 +314,14 @@ function OrganizerActions({ plan }: { plan: Plan }) {
   const [confirming, setConfirming] = useState(false);
   if (!confirming) {
     return (
-      <Button variant="secondary" onClick={() => setConfirming(true)}>
-        <X size={17} /> Cancel this plan
-      </Button>
+      <>
+        <Button onClick={() => navigate(`/plan/${plan.id}/edit`)}>
+          <Pencil size={17} /> Edit details
+        </Button>
+        <Button variant="secondary" onClick={() => setConfirming(true)}>
+          <X size={17} /> Cancel this {plan.kind === "hosted" ? "experience" : "plan"}
+        </Button>
+      </>
     );
   }
   return (
@@ -283,7 +337,17 @@ function OrganizerActions({ plan }: { plan: Plan }) {
   );
 }
 
-function Messages({ planId, myId }: { planId: number; myId: string }) {
+function Messages({
+  planId,
+  myId,
+  organizerId,
+  hostName,
+}: {
+  planId: number;
+  myId: string;
+  organizerId: string;
+  hostName: string | null;
+}) {
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState("");
@@ -324,7 +388,8 @@ function Messages({ planId, myId }: { planId: number; myId: string }) {
     <section className="messages" aria-label="Group messages">
       <p className="eyebrow">Group messages</p>
       <p className="messages-help">
-        Only people in this plan can see these. Use them to find each other on the day.
+        Only people in this plan{hostName ? " and the host" : ""} can see these. Use them to find
+        each other on the day.
       </p>
       {error && <ErrorBanner message={error} onRetry={load} />}
       {messages === null ? (
@@ -335,7 +400,9 @@ function Messages({ planId, myId }: { planId: number; myId: string }) {
         <ul>
           {messages.map((m) => (
             <li key={m.id} className={m.user_id === myId ? "mine" : ""}>
-              <strong>{m.user_id === myId ? "You" : m.name}</strong>
+              <strong>
+                {m.user_id === myId ? "You" : hostName && m.user_id === organizerId ? `${hostName} (host)` : m.name}
+              </strong>
               <time dateTime={m.created_at}>
                 {relativeDay(m.created_at)} {formatTime(m.created_at)}
               </time>
@@ -371,7 +438,11 @@ function SafetyAndReport({ plan }: { plan: Plan }) {
       <p className="eyebrow">Meeting new people safely</p>
       <ul>
         <li>Meet in a public place, and tell a friend where you&rsquo;re going.</li>
-        <li>NOVICE doesn&rsquo;t supervise plans. Organizers are fellow members, not instructors.</li>
+        <li>
+          {plan.kind === "hosted"
+            ? "Hosts list themselves on NOVICE. Check their website or reviews if you're unsure."
+            : "NOVICE doesn\u2019t supervise plans. Organizers are fellow members, not instructors."}
+        </li>
         <li>Leave anytime if something feels off.</li>
       </ul>
       {sent ? (

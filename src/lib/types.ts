@@ -49,7 +49,26 @@ export type Plan = {
   members: Member[];
   is_member: boolean;
   my_attended: boolean | null;
+  /** peer = organized by a member; hosted = listed by a business host. */
+  kind: PlanKind;
+  /** Hosted only. Paid at the venue, never through NOVICE. null = free. */
+  price_cents: number | null;
+  host_name: string | null;
+  host_verified: boolean;
+  host_website: string | null;
 };
+
+export type PlanKind = "peer" | "hosted";
+
+export type Host = {
+  id: string;
+  business_name: string;
+  website: string | null;
+  about: string | null;
+  verified: boolean;
+};
+
+export type HostInput = { businessName: string; website: string; about: string };
 
 export type Message = {
   id: number;
@@ -66,7 +85,12 @@ export type NewPlan = {
   location: string;
   details: string;
   capacity: number;
+  /** Create as a hosted experience (requires a host profile). */
+  asHost?: boolean;
+  priceCents?: number | null;
 };
+
+export type PlanEdit = Omit<NewPlan, "interestId" | "asHost">;
 
 export const intentCopy: Record<Intent, { label: string; desc: string }> = {
   curious: { label: "Curious", desc: "I'm exploring the idea" },

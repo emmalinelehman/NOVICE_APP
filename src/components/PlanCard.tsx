@@ -1,6 +1,6 @@
 import { ArrowRight, CalendarDays, MapPin } from "lucide-react";
 import type { Plan } from "@/lib/types";
-import { formatTime, relativeDay } from "@/lib/format";
+import { formatPrice, formatTime, plannerName, relativeDay } from "@/lib/format";
 import { navigate } from "@/lib/router";
 import { Badge, Photo } from "./ui";
 
@@ -26,7 +26,10 @@ export function PlanCard({ plan }: { plan: Plan }) {
       </p>
       <footer>
         <span>
-          {plan.member_count}/{plan.capacity} going &middot; organized by {plan.organizer_name ?? "a member"}
+          {plan.member_count}/{plan.capacity} going &middot;{" "}
+          {plan.kind === "hosted"
+            ? `hosted by ${plannerName(plan)} · ${formatPrice(plan.price_cents)}`
+            : `organized by ${plannerName(plan)}`}
         </span>
         <ArrowRight size={18} />
       </footer>

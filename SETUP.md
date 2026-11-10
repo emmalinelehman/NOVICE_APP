@@ -62,6 +62,12 @@ Delete the test account afterward in **Authentication > Users**, and add your te
 
 Open `supabase/metrics.sql` in the SQL Editor and run one block at a time. Block 1 is your headline number: how many testers committed to a plan with at least one other person, and how many said they actually went.
 
+## Updating the database after code changes
+
+`schema.sql` is safe to re-run on your live project: it upgrades existing tables in place and keeps your data. After pulling changes that touch it (like the host features), open **SQL Editor**, paste all of `supabase/schema.sql`, and click **Run** before (or right after) Vercel deploys the new app.
+
+To give a host the Verified badge: **Table Editor > hosts**, set `verified` to true on their row.
+
 ## Testing without Supabase
 
-`npx vite --config vite.config.mock.ts` runs the app against an in-browser fake database with sample people and plans. Use it to try UI changes safely. `test/rls_test.sql` contains the database rule tests.
+`npx vite --config vite.config.mock.ts` runs the app against an in-browser fake database with sample people and plans. Sign in as `dee@x.edu` / `secret1` to see the host side (Ava, Ben, and Cy are regular members, same password). If you used the mock before, run `__mock.reset()` in the browser console to load the new sample data. Use it to try UI changes safely. `test/rls_test.sql` contains the database rule tests.
