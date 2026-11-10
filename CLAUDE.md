@@ -1,1 +1,26 @@
-@AGENTS.md
+# NOVICE MVP
+
+Social discovery app for Ann Arbor: users keep a private Never-Done List, see anonymous counts of who else wants to try each thing, and propose or join small peer-organized plans. Built as a class MVP (Vercel + Supabase) to test one hypothesis: shared interest turns into real participation.
+
+## Stack
+- React 19 + TypeScript + Vite + Tailwind v4 (only for the CSS reset; styling is hand-written classes in `src/index.css`, ported from the Figma Make prototype).
+- Supabase (Postgres, Auth with email + password, confirm email OFF). Client: `@supabase/supabase-js`.
+- Deployed on Vercel; `vercel.json` rewrites all paths to `index.html` for client routing.
+
+## Structure
+- `src/lib/api.ts`: the only file that talks to Supabase. Every data call is a Postgres function (RPC) defined in `supabase/schema.sql`.
+- `src/lib/store.tsx`: loads profile, interest stats, the user's list, and all plans; `run()` wraps mutations with toast + refresh.
+- `src/lib/router.ts`: tiny path router (`/`, `/list`, `/explore`, `/profile`, `/interest/:id`, `/interest/:id/new-plan`, `/plan/:id`).
+- `src/screens/*`: one file per screen. `src/components/ui.tsx`: shared pieces, including `Photo` (Unsplash photo or lettered fallback).
+- `supabase/schema.sql`: tables, row level security, triggers, functions, seed interests. Idempotent.
+- `supabase/metrics.sql`: test-result queries. `test/`: in-browser fake API (`mock-api.ts`, used by `vite.config.mock.ts`) and SQL rule tests.
+
+## Rules that matter
+- Never-Done Lists are private (owner-only RLS). Others only see totals via `interest_stats()` (security definer, returns counts only).
+- A user's first name becomes visible only when they organize or join a plan.
+- Plans are peer-organized only. Hosted/paid experiences, host dashboards, and payments are intentionally out of scope.
+- Keep scope small: the MVP exists to measure interest -> committed plan -> attended.
+
+## Commands
+- `npm run dev`, `npm run build`, `npm run typecheck`
+- `npx vite --config vite.config.mock.ts` to run against fake data.
